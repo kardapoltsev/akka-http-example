@@ -23,7 +23,7 @@ object Server {
   val HttpPort = 7000
   val TcpEchoPort = 7001
   val TcpStaticPort = 7002
-  val TcpOldStaticPort = 7002
+  val TcpOldStaticPort = 7003
 
   val bodyLength = 100 * 1024 * 1024
   val body = {
@@ -109,6 +109,7 @@ object Server {
 
   def runStaticOldTcp(host: String, port: Int)(implicit system: ActorSystem): Unit = {
     import akka.io.Tcp._
+    println(s"starting nack static tcp on $host:$port")
 
     val handler = system.actorOf(Props[PublicApiEndpoint])
     akka.io.IO(akka.io.Tcp).tell(Bind(handler, new InetSocketAddress(host, port)), handler)
@@ -136,6 +137,6 @@ class PublicApiEndpoint extends Actor with ActorLogging {
       val nackActor = context.actorOf(NackActor.props(connection))
       nackActor ! Register(self, keepOpenOnPeerClosed = true)
     case Received(data) =>
-      sender() ! ByteString(s"HTTP/1.1 200 OK\nContent-length: ${Server.body.length}\n\n") ++ Server.body
+      sender() ! Write(ByteString(s"HTTP/1.1 200 OK\nContent-length: ${Server.body.length}\n\n") ++ Server.body)
   }
 }
