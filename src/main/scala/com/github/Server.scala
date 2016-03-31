@@ -1,8 +1,9 @@
 package com.github
 
+import java.net.InetSocketAddress
 import java.util.concurrent.atomic.AtomicLong
 
-import akka.actor.ActorSystem
+import akka.actor._
 import akka.http.scaladsl.Http
 import akka.http.scaladsl.model._
 import akka.http.scaladsl.model.HttpMethods._
@@ -22,6 +23,7 @@ object Server {
   val HttpPort = 7000
   val TcpEchoPort = 7001
   val TcpStaticPort = 7002
+  val TcpOldStaticPort = 7002
 
   val bodyLength = 100 * 1024 * 1024
   val body = {
@@ -55,6 +57,7 @@ object Server {
 
     runEchoTcp(Host, TcpEchoPort)
     runStaticTcp(Host, TcpStaticPort)
+    runStaticOldTcp(Host, TcpOldStaticPort)
 
     Await.result(system.whenTerminated, Duration.Inf)
   }
@@ -104,4 +107,35 @@ object Server {
     }
   }
 
+  def runStaticOldTcp(host: String, port: Int)(implicit system: ActorSystem): Unit = {
+    import akka.io.Tcp._
+
+    val handler = system.actorOf(Props[PublicApiEndpoint])
+    akka.io.IO(akka.io.Tcp).tell(Bind(handler, new InetSocketAddress(host, port)), handler)
+  }
+
+}
+
+
+class PublicApiEndpoint extends Actor with ActorLogging {
+  import akka.io.Tcp._
+
+  override val supervisorStrategy = SupervisorStrategy.stoppingStrategy
+
+
+  override def postRestart(thr: Throwable): Unit = context.stop(self)
+
+  def receive = {
+    case Bound(addr) =>
+      log.error(s"PublicApiEndpoint bound to ${addr.getHostString}:${addr.getPort}")
+    case CommandFailed(b: Bind) =>
+      log.error(s"Bind failed, stopping PublicApiEndpoint")
+      context.stop(self)
+    case c @ Connected(remote, local) =>
+      val connection = sender()
+      val nackActor = context.actorOf(NackActor.props(connection))
+      nackActor ! Register(self, keepOpenOnPeerClosed = true)
+    case Received(data) =>
+      sender() ! ByteString(s"HTTP/1.1 200 OK\nContent-length: ${Server.body.length}\n\n") ++ Server.body
+  }
 }
